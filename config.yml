@@ -1,0 +1,7 @@
+name: config
+experiment_env:
+
+  # model_parameters
+  tau : 0.1
+
+  # train_parameters
