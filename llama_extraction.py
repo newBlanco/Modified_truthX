@@ -92,16 +92,40 @@ def extract_token_rep_withmask(example, model, type):
     return tgt_ffn_output,tgt_att_output
 
 
+
+features_ffnout_hook = []
+features_attout_hook = []
+
+# 使用 hook 函数
+def ffnhook(module, fea_in, fea_out):
+    # 只取前向传播的数值
+    features_ffnout_hook.append(fea_out)  # 勾的是指定层的输出
+
+def atthook(module, fea_in, fea_out):
+    # 只取前向传播的数值
+    features_attout_hook.append(fea_out)  # 勾的是指定层的输出
+
+
 # Example usage:
 model_name = "../gpt2"  # Replace with your LLaMA model name
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = CustomLLaMAModel(model_name)
 
+att_arr= [f"model.h.{i}.attn" for i in range(0,12)]
+ffn_arr= [f"model.h.{i}.mlp" for i in range(0,12)]
+
+
+for (name, module) in model.named_modules():
+    # print(name, module)
+    if name in att_arr:
+        module.register_forward_hook(hook=atthook)
+    if name in ffn_arr:
+        module.register_forward_hook(hook=ffnhook)
+
+
 # pos and neg list
-pos_ffnlist=[]
-pos_attlist=[]
-neg_ffnlist=[]
-neg_attlist=[]
+pos_list=[]
+neg_list=[]
 
 with torch.no_grad():
     with open("llamaTruthx_dataset.json") as f:
@@ -109,39 +133,53 @@ with torch.no_grad():
         # Forward pass to get the intermediate outputs
         # print(dic_list)
         for example in dic_list:
-
+            ###########
+            ### POS ###
+            ###########
+            # print(example)
             pos_tgt_ffn_output,pos_tgt_att_output= extract_token_rep(example, model, "pos")
-            # print(pos_tgt_ffn_output[-1])
-            for i, ffn_output in enumerate(pos_tgt_ffn_output):
-                for index in example["pos_dic"]["coexit_list"]:
-                    # 需要reshape吗
-                    if len(ffn_output.shape)==3:
-                        pos_ffnlist.append(ffn_output[:,index,:].squeeze(0))
-                    elif len(ffn_output.shape)==2:
-                        pos_ffnlist.append(ffn_output[index, :])
-            for i, attention_output in enumerate(pos_tgt_att_output):
-                for index in example["pos_dic"]["coexit_list"]:
-                    # 需要reshape吗
-                    # print(index)
-                    # plot(attention_output[:, :, index, :].squeeze(0))  # 结论：gpt2会mask掉后面的
-                    pos_attlist.append(attention_output[:,:,index,:].reshape(-1))
+            print(len(features_ffnout_hook))
 
+            # 提取ffn输出
+            for index in example["pos_dic"]["coexit_list"]:
+                for rep in features_ffnout_hook[0:12]:
+                    # print(rep.shape)
+                    # 需要reshape吗
+                    pos_list.append(rep[:, index, :].squeeze(0))
+
+            # 提取注意力输出
+                for rep in features_attout_hook[0:12]:
+                    # print(rep[0].shape)
+                    pos_list.append(rep[0][0, index, :].reshape(-1))
+
+            ###########
+            ### NEG ###
+            ###########
             neg_tgt_ffn_output, neg_tgt_att_output = extract_token_rep(example, model, "neg")
-            for i, ffn_output in enumerate(neg_tgt_ffn_output):
-                for index in example["neg_dic"]["coexit_list"]:
+
+            print(len(features_ffnout_hook))
+            print(len(features_attout_hook))
+            # 提取ffn输出
+            for index in example["neg_dic"]["coexit_list"]:
+                for rep in features_ffnout_hook[12:24]:
+                    # print(rep[0], rep[1].shape)
                     # 需要reshape吗
-                    if len(ffn_output.shape) == 3:
-                        neg_ffnlist.append(ffn_output[:, index, :].squeeze(0))
-                    elif len(ffn_output.shape) == 2:
-                        neg_ffnlist.append(ffn_output[index, :])
-            for i, attention_output in enumerate(neg_tgt_att_output):
-                if i==1:
-                    break
-                for index in example["neg_dic"]["coexit_list"]:
-                    # 需要reshape吗
-                    # print(index)
-                    # plot(attention_output[:, :, index, :].squeeze(0)) # 结论：gpt2会mask掉后面的
-                    neg_attlist.append(attention_output[:, :, index, :].reshape(-1))
+                    neg_list.append(rep[:, index, :].squeeze(0))
+
+            # 提取注意力输出
+                # plot(attention_output[:, :, index, :].squeeze(0)) # 结论：gpt2会mask掉后面的
+                for rep in features_attout_hook[12:24]:
+                    # print(rep[0, index, :].shape)
+                    neg_list.append(rep[0][0, index, :].reshape(-1))
+
+            features_ffnout_hook=[]
+            features_attout_hook=[]
+
+import pandas as pd
+
+dic={"pos":pos_list,"neg":neg_list}
+
+pd.DataFrame(dic).to_csv("extraction_dataset.csv")
 
 # print(neg_list)
 
